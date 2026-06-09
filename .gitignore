@@ -1,0 +1,7 @@
+__pycache__
+venv
+data/raw
+data/processed
+log
+models
+reports
