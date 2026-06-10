@@ -62,6 +62,9 @@ def preprocess(raw_dir: str, dest_dir: str):
     train_df.to_csv(f"{dest_dir}/train.csv", index=False)
     test_df.to_csv(f"{dest_dir}/test.csv", index=False)
     movies.to_csv(f"{dest_dir}/movies.csv", index=False)
+    ratings.to_csv(f"{dest_dir}/ratings.csv", index=False)
+    tags.to_csv(f"{dest_dir}/tags.csv", index=False)
+    
     
     with open(f'{dest_dir}/user2idx.pkl', 'wb') as file:
         pickle.dump(user2idx, file)
