@@ -1,0 +1,11 @@
+pandas
+numpy
+PyYAML
+scikit-learn
+torch
+fastapi
+uvicorn
+xgboost
+joblib
+tqdm
+matplotlib

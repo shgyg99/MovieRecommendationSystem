@@ -10,9 +10,9 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.utils.config_manager import config_manager
-from src.utils.logger import setup_logger
+from src.utils.logger import get_logger
 
-logger = setup_logger(quiet=True)
+logger = get_logger(__name__)
 
 def check_data_exists(dest_dir: Path) -> bool:
     required_files = ["ratings.csv", "movies.csv"]
@@ -28,8 +28,8 @@ def download_and_extract_movielens(dataset_url: str, destination_path: str = "./
     dest_dir.mkdir(parents=True, exist_ok=True)
     
     if check_data_exists(dest_dir) and not force_download:
-        logger.info("✅ Data already exists! No need to download.")
-        logger.info(f"📍 Location: {dest_dir}")
+        logger.info("Data already exists! No need to download.")
+        logger.info(f"Location: {dest_dir}")
         logger.info("You can start using the data immediately.")
         return dest_dir
     
@@ -58,7 +58,7 @@ def download_and_extract_movielens(dataset_url: str, destination_path: str = "./
             downloaded_path.rmdir()
             os.remove(f"{dest_dir}/README.txt")
         
-        logger.info("✅ Download and extraction completed!")
+        logger.info("Download and extraction completed!")
         return dest_dir
         
     except Exception as e:
@@ -77,8 +77,8 @@ if __name__ == "__main__":
     
     if data_path and check_data_exists(data_path):
         print("\n" + "="*50)
-        print("🎬 MovieLens Dataset is ready!")
+        print("MovieLens Dataset is ready!")
         print("="*50)
-        print(f"📁 Path: {data_path}")
-        print(f"📄 Files: ratings.csv, movies.csv, tags.csv, links.csv")
+        print(f"Path: {data_path}")
+        print(f"Files: ratings.csv, movies.csv, tags.csv, links.csv")
         print("="*50)
