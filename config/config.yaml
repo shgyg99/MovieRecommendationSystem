@@ -2,3 +2,6 @@ data:
   url: "http://files.grouplens.org/datasets/movielens/ml-latest-small.zip"
   raw_path: "./data/raw"
   processed_path: "./data/processed"
+
+models:
+  out_path: "models"

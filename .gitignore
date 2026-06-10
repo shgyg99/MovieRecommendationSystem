@@ -3,6 +3,6 @@ venv
 data/raw
 data/processed
 logs
-./models
+/models
 reports
 .vscode
