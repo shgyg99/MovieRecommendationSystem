@@ -2,6 +2,14 @@ data:
   url: "http://files.grouplens.org/datasets/movielens/ml-latest-small.zip"
   raw_path: "./data/raw"
   processed_path: "./data/processed"
+  num_negatives: 4
+  add_test_negatives: true
+
+model:
+  batch_size: 1024
+  embedding_dim: 64
+  epochs: 20
+  learning_rate: 0.01
 
 models:
-  out_path: "models"
+  out_path: "./models"
