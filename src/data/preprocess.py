@@ -13,14 +13,20 @@ from src.utils.config_manager import config_manager
 
 logger = get_logger(__name__)
 
-def create_negative_samples(user_items_dict, num_movies, num_negatives=4, random_state=42):
-
-    np.random.seed(random_state)
+def create_negative_samples(
+    user_positive_items,
+    excluded_user_items,
+    num_movies,
+    num_negatives=4,
+    random_state=42,
+):
+    rng = np.random.default_rng(random_state)
     negative_samples = []
+    all_movies = set(range(num_movies))
 
-    for user_idx, positive_items in user_items_dict.items():
-        all_movies = set(range(num_movies))
-        negative_candidates = list(all_movies - positive_items)
+    for user_idx, positive_items in user_positive_items.items():
+        excluded_items = excluded_user_items.get(user_idx, set())
+        negative_candidates = list(all_movies - excluded_items)
 
         if not negative_candidates:
             logger.warning(f"User {user_idx} has no negative candidates! (watched all {num_movies} movies)")
@@ -29,7 +35,7 @@ def create_negative_samples(user_items_dict, num_movies, num_negatives=4, random
         num_neg_total = num_negatives * len(positive_items)
 
         replace = len(negative_candidates) < num_neg_total
-        sampled_negatives = np.random.choice(negative_candidates, size=num_neg_total, replace=replace)
+        sampled_negatives = rng.choice(negative_candidates, size=num_neg_total, replace=replace)
 
         for movie_idx in sampled_negatives:
             negative_samples.append({
@@ -38,12 +44,11 @@ def create_negative_samples(user_items_dict, num_movies, num_negatives=4, random
                 'label': 0
             })
 
-    return pd.DataFrame(negative_samples)
+    return pd.DataFrame(negative_samples, columns=["user_idx", "movie_idx", "label"])
 
 
 def create_test_with_negatives(test_positives_df, user_items, num_movies, num_negatives=4, random_state=42):
-
-    np.random.seed(random_state)
+    rng = np.random.default_rng(random_state)
     test_data = []
 
     for _, row in test_positives_df.iterrows():
@@ -63,7 +68,7 @@ def create_test_with_negatives(test_positives_df, user_items, num_movies, num_ne
         if negative_candidates:
             num_neg_total = min(num_negatives * len(user_test_positives), len(negative_candidates))
             if num_neg_total > 0:
-                sampled_negatives = np.random.choice(negative_candidates, size=num_neg_total, replace=False)
+                sampled_negatives = rng.choice(negative_candidates, size=num_neg_total, replace=False)
 
                 for movie_idx in sampled_negatives:
                     test_data.append({
@@ -72,7 +77,62 @@ def create_test_with_negatives(test_positives_df, user_items, num_movies, num_ne
                         'label': 0
                     })
 
-    return pd.DataFrame(test_data)
+    return pd.DataFrame(test_data, columns=["user_idx", "movie_idx", "label"])
+
+
+def split_positive_interactions(positive_ratings, test_size=0.2):
+    train_parts = []
+    test_parts = []
+
+    for _, user_df in positive_ratings.sort_values("timestamp").groupby("user_idx", sort=False):
+        if len(user_df) == 1:
+            train_parts.append(user_df)
+            continue
+
+        num_test = max(1, int(np.ceil(len(user_df) * test_size)))
+        num_test = min(num_test, len(user_df) - 1)
+        train_parts.append(user_df.iloc[:-num_test])
+        test_parts.append(user_df.iloc[-num_test:])
+
+    train_df = pd.concat(train_parts, ignore_index=True)
+    if test_parts:
+        test_df = pd.concat(test_parts, ignore_index=True)
+    else:
+        test_df = positive_ratings.iloc[0:0].copy()
+
+    return train_df, test_df
+
+
+def build_user_items(interactions_df):
+    user_items = defaultdict(set)
+    for _, row in interactions_df.iterrows():
+        user_items[int(row["user_idx"])].add(int(row["movie_idx"]))
+    return user_items
+
+
+def create_genre_matrix(movies_df, movie2idx):
+    all_genres = set()
+    for genres in movies_df['genres'].str.split('|'):
+        all_genres.update(genres)
+
+    all_genres.discard('(no genres listed)')
+
+    genre2idx = {genre: idx for idx, genre in enumerate(sorted(all_genres))}
+    num_genres = len(genre2idx)
+
+    genre_matrix = np.zeros((len(movie2idx), num_genres), dtype=np.float32)
+
+    for _, row in movies_df.iterrows():
+        movie_idx = movie2idx.get(row["movieId"])
+        if movie_idx is None:
+            continue
+
+        genres = str(row["genres"]).split("|")
+        for genre in genres:
+            if genre in genre2idx:
+                genre_matrix[movie_idx, genre2idx[genre]] = 1.0
+
+    return genre_matrix, genre2idx, num_genres
 
 
 def preprocess(raw_dir: str, dest_dir: str, num_negatives: int = 4, add_test_negatives: bool = True):
@@ -111,28 +171,21 @@ def preprocess(raw_dir: str, dest_dir: str, num_negatives: int = 4, add_test_neg
     positive_ratings['user_idx'] = positive_ratings['userId'].map(user2idx)
     positive_ratings['movie_idx'] = positive_ratings['movieId'].map(movie2idx)
 
-    # Create user_items dictionary for negative sampling
-    logger.info("Creating user items dictionary...")
-    user_items = defaultdict(set)
-    for _, row in positive_ratings.iterrows():
-        user_items[row['user_idx']].add(row['movie_idx'])
+    logger.info("Splitting positive data per user by timestamp...")
+    train_positives, test_positives = split_positive_interactions(positive_ratings)
 
-    # Create negative samples for training
-    logger.info(f"Creating negative samples ({num_negatives} per positive)...")
-    negative_df = create_negative_samples(user_items, len(movie_ids), num_negatives)
-    logger.info(f"Created {len(negative_df)} negative samples")
+    logger.info("Creating user item dictionaries...")
+    train_user_items = build_user_items(train_positives)
+    all_user_items = build_user_items(positive_ratings)
 
-    # Split positive data (80/20 based on timestamp)
-    logger.info("Splitting positive data (80/20 based on timestamp)...")
-    positive_ratings = positive_ratings.sort_values('timestamp')
-    split_idx = int(len(positive_ratings) * 0.8)
-
-    train_positives = positive_ratings.iloc[:split_idx]
-    test_positives = positive_ratings.iloc[split_idx:]
-
-    # Split negatives for train only
-    logger.info("Splitting negatives for training...")
-    train_negatives = negative_df.sample(frac=0.8, random_state=42)
+    logger.info(f"Creating training negative samples ({num_negatives} per train positive)...")
+    train_negatives = create_negative_samples(
+        train_user_items,
+        all_user_items,
+        len(movie_ids),
+        num_negatives,
+    )
+    logger.info(f"Created {len(train_negatives)} training negative samples")
 
     # Combine train data (positives + negatives)
     logger.info("Combining train data...")
@@ -147,7 +200,7 @@ def preprocess(raw_dir: str, dest_dir: str, num_negatives: int = 4, add_test_neg
     # Create test data (with or without negatives)
     if add_test_negatives:
         logger.info("Creating test data with negative samples...")
-        test_df = create_test_with_negatives(test_positives, user_items, len(movie_ids), num_negatives)
+        test_df = create_test_with_negatives(test_positives, all_user_items, len(movie_ids), num_negatives)
         logger.info(f"Test data: {len(test_df)} samples ({test_df['label'].sum()} positive, {len(test_df) - test_df['label'].sum()} negative)")
     else:
         logger.info("Creating test data (only positives)...")
@@ -155,6 +208,11 @@ def preprocess(raw_dir: str, dest_dir: str, num_negatives: int = 4, add_test_neg
         logger.info(f"Test data: {len(test_df)} samples (all positive)")
 
     logger.info(f"Train: {len(train_df)} samples ({train_df['label'].sum()} positive, {len(train_df) - train_df['label'].sum()} negative)")
+
+    genre_matrix, genre2idx, num_genres = create_genre_matrix(movies, movie2idx)
+    np.save(dest_dir / "genre_matrix.npy", genre_matrix)
+    with open(dest_dir / "genre2idx.pkl", 'wb') as f:
+        pickle.dump(genre2idx, f)
 
     # Save files
     logger.info("Saving processed files...")
@@ -179,12 +237,13 @@ def preprocess(raw_dir: str, dest_dir: str, num_negatives: int = 4, add_test_neg
 
     # Save user_items dict for future use
     with open(dest_dir / "user_items.pkl", "wb") as file:
-        pickle.dump(dict(user_items), file)
+        pickle.dump(dict(all_user_items), file)
 
     # Save statistics
     stats = {
         'num_users': len(user2idx),
         'num_movies': len(movie2idx),
+        'num_genres': num_genres,
         'num_train_samples': len(train_df),
         'num_train_positives': int(train_df['label'].sum()),
         'num_train_negatives': int(len(train_df) - train_df['label'].sum()),
@@ -218,6 +277,7 @@ if __name__ == "__main__":
     print("="*50)
     print(f"Users: {stats['num_users']}")
     print(f"Movies: {stats['num_movies']}")
+    print(f"Genres: {stats['num_genres']}")
     print(f"Train samples: {stats['num_train_samples']:,} (pos:{stats['num_train_positives']:,} / neg:{stats['num_train_negatives']:,})")
     print(f"Test samples: {stats['num_test_samples']:,} (pos:{stats['num_test_positives']:,} / neg:{stats['num_test_negatives']:,})")
     print(f"Negative ratio: 1:{stats['negative_sampling_ratio']}")

@@ -9,7 +9,7 @@ model:
   batch_size: 1024
   embedding_dim: 64
   epochs: 20
-  learning_rate: 0.01
+  learning_rate: 0.001
 
 models:
   out_path: "./models"
